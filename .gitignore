@@ -58,3 +58,4 @@ coverage.xml
 # *.sln
 # *.swp
 
+*.csv
