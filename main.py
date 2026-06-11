@@ -26,7 +26,8 @@ ecg_clean = nk.ecg_simulate(
 n_samples = len(ecg_clean)
 time = np.arange(n_samples) / sampling_rate
 
-noise = np.random.normal(0, noise_amplitude, n_samples)
+rng = np.random.default_rng(42)
+noise = rng.normal(0, noise_amplitude, n_samples)
 ecg_noisy = ecg_clean + noise
 
 
@@ -62,14 +63,56 @@ magnitude = np.abs(fft_noisy) / n_samples
 positive_frequencies = frequencies >= 0
 frequency_limit = frequencies <= 100
 plot_range = positive_frequencies & frequency_limit
+plot_frequencies = frequencies[plot_range]
+plot_magnitude = magnitude[plot_range]
+
+# Identificacao dos principais picos da FFT para marcacao visual no grafico
+peak_search_range = plot_frequencies >= low_cutoff
+search_frequencies = plot_frequencies[peak_search_range]
+search_magnitude = plot_magnitude[peak_search_range]
+
+local_maxima = np.where(
+    (search_magnitude[1:-1] > search_magnitude[:-2])
+    & (search_magnitude[1:-1] > search_magnitude[2:])
+)[0] + 1
+
+n_peaks_to_mark = 8
+most_relevant_peaks = local_maxima[
+    np.argsort(search_magnitude[local_maxima])[-n_peaks_to_mark:]
+]
+most_relevant_peaks = most_relevant_peaks[np.argsort(search_frequencies[most_relevant_peaks])]
+peak_frequencies = search_frequencies[most_relevant_peaks]
+peak_magnitudes = search_magnitude[most_relevant_peaks]
 
 plt.figure(figsize=(12, 5))
-plt.plot(frequencies[plot_range], magnitude[plot_range])
-plt.title("Espectro de magnitude do ECG com ruido")
+plt.plot(plot_frequencies, plot_magnitude, label="Magnitude da FFT")
+plt.scatter(
+    peak_frequencies,
+    peak_magnitudes,
+    color="red",
+    s=45,
+    zorder=3,
+    label="Picos identificados"
+)
+
+for peak_frequency, peak_magnitude in zip(peak_frequencies, peak_magnitudes):
+    plt.annotate(
+        f"{peak_frequency:.1f} Hz",
+        xy=(peak_frequency, peak_magnitude),
+        xytext=(0, 8),
+        textcoords="offset points",
+        ha="center",
+        fontsize=8,
+        color="red"
+    )
+
+plt.title("Espectro de magnitude do ECG com ruido com picos marcados")
 plt.xlabel("Frequencia (Hz)")
 plt.ylabel("Magnitude")
+plt.legend()
 plt.grid(True)
 plt.tight_layout()
+plt.savefig("fft_picos_marcados.png", dpi=300)
 plt.show()
 
 
@@ -77,8 +120,54 @@ plt.show()
 bandpass_mask = (np.abs(frequencies) >= low_cutoff) & (np.abs(frequencies) <= high_cutoff)
 fft_filtered = fft_noisy.copy()
 fft_filtered[~bandpass_mask] = 0
+filtered_magnitude = np.abs(fft_filtered) / n_samples
+plot_filtered_magnitude = filtered_magnitude[plot_range]
 
 ecg_filtered = np.fft.ifft(fft_filtered).real
+
+
+# Comparacao entre os espectros antes e depois da filtragem
+comparison_frequency_limit = 50
+comparison_range = positive_frequencies & (frequencies <= comparison_frequency_limit)
+comparison_frequencies = frequencies[comparison_range]
+comparison_magnitude = magnitude[comparison_range]
+comparison_filtered_magnitude = filtered_magnitude[comparison_range]
+comparison_y_limit = max(comparison_magnitude.max(), comparison_filtered_magnitude.max()) * 1.05
+
+fig, axes = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
+spectra = [
+    (axes[0], comparison_magnitude, "ECG com ruido", "tab:blue"),
+    (axes[1], comparison_filtered_magnitude, "ECG filtrado", "tab:orange")
+]
+
+for axis, spectrum_magnitude, label, color in spectra:
+    axis.plot(
+        comparison_frequencies,
+        spectrum_magnitude,
+        label=label,
+        linewidth=1.3,
+        color=color
+    )
+    axis.axvspan(
+        low_cutoff,
+        high_cutoff,
+        color="green",
+        alpha=0.12,
+        label="Faixa preservada pelo filtro"
+    )
+    axis.axvline(low_cutoff, color="green", linestyle="--", linewidth=1)
+    axis.axvline(high_cutoff, color="green", linestyle="--", linewidth=1)
+    axis.set_ylabel("Magnitude")
+    axis.set_ylim(0, comparison_y_limit)
+    axis.legend()
+    axis.grid(True)
+
+fig.suptitle("Comparacao dos espectros antes e depois da filtragem")
+axes[-1].set_xlabel("Frequencia (Hz)")
+axes[-1].set_xlim(0, comparison_frequency_limit)
+fig.tight_layout()
+plt.savefig("fft_comparacao_filtragem.png", dpi=300)
+plt.show()
 
 
 # Comparacao entre sinal com ruido e sinal filtrado
